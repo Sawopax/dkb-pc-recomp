@@ -693,6 +693,29 @@ static void ov_to_posix_utc(Cpu *c) {
     ret_x(c, (uint64_t)t);
 }
 
+// Result ToPosixTime(int *count, PosixTime *out, int max, const CalendarTime &local) (imported by update 458752): the
+// local calendar time in the Windows zone. The sdk's version reads the time zone rule the host never loads and fails.
+// One answer; around a DST change the offset is taken at the result, which picks the later of two readings.
+static void ov_to_posix(Cpu *c) {
+    int32_t *count = arg_p(c, 0);
+    int64_t *out = arg_p(c, 1);
+    int max = (int)arg_x(c, 2);
+    const CalendarTime *ct = arg_p(c, 3);
+    if (!ct) { ret_x(c, TIME_R_INVALID); return; }
+    int64_t mon = ct->month - 1, y = ct->year + floor_div(mon, 12);
+    mon -= floor_div(mon, 12) * 12;
+    int64_t as_utc = (days_from_civil(y, (unsigned)mon + 1, 1) + ct->day - 1) * 86400 + ct->hour * 3600 +
+                     ct->minute * 60 + ct->second;
+    CalendarTime tmp;
+    CalendarInfo ci;
+    int64_t t = as_utc;
+    for (int pass = 0; pass < 2; pass++)
+        if (local_calendar(t, &tmp, &ci)) t = as_utc - ci.utc_offset;
+    if (count) *count = max > 0 ? 1 : 0;
+    if (out && max > 0) *out = t;
+    ret_x(c, 0);
+}
+
 // ClockSnapshot::ClockSnapshot()
 static void ov_snapshot_init(Cpu *c) {
     ClockSnapshot *s = arg_p(c, 0);
@@ -1056,6 +1079,7 @@ HOST_OVERRIDE("_ZN2nn4time19StandardSteadyClock3nowEv", ov_steady_now);
 HOST_OVERRIDE("_ZN2nn4time14ToCalendarTimeEPNS0_12CalendarTimeEPNS0_22CalendarAdditionalInfoERKNS0_9PosixTimeE",
               ov_to_calendar);
 HOST_OVERRIDE("_ZN2nn4time19ToCalendarTimeInUtcERKNS0_9PosixTimeE", ov_to_calendar_utc);
+HOST_OVERRIDE("_ZN2nn4time11ToPosixTimeEPiPNS0_9PosixTimeEiRKNS0_12CalendarTimeE", ov_to_posix);
 HOST_OVERRIDE("_ZN2nn4time18ToPosixTimeFromUtcERKNS0_12CalendarTimeE", ov_to_posix_utc);
 HOST_OVERRIDE("_ZN2nn4time13ClockSnapshotC1Ev", ov_snapshot_init);
 HOST_OVERRIDE("_ZN2nn4time13ClockSnapshot29CreateWithStandardSystemClockEPS1_", ov_snapshot_create);
