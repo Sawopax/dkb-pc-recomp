@@ -167,9 +167,10 @@ static int pool_gpu_visible(const pool_t *o) { return !(o->flags & NVN_MEMORY_PO
 
 // ---------- Device
 static const int devinfo[] = {   // Tegra X1 values (nnheaders nvn_DeviceConstantsNX.h, measured on SMO)
-    // ABI: Donkey Kong Bananza (NVN 2) requires major 231 and minor >= 16 (main+0x5b29a4, the check before the sead
-    // graphics set-up); TotK required 55 and >= 15. The rest are still the Tegra X1 values.
-    [0x00] = 231, [0x01] = 16,
+    // ABI: Donkey Kong Bananza (NVN 2) requires major 231 and a minimum minor before the sead graphics set-up: >= 16 in
+    // 1.0.0 (main+0x5b29a4) and >= 30 in update 458752 (main+0x5c61a4). 30 satisfies both. TotK required 55 and >= 15.
+    // The rest are still the Tegra X1 values.
+    [0x00] = 231, [0x01] = 30,
     [0x02] = 14, [0x03] = 65536, [0x04] = 256, [0x05] = 8, [0x06] = 16, [0x07] = 4, [0x08] = 16, [0x09] = 32,
     [0x0A] = 16, [0x0B] = 4, [0x0C] = 4, [0x0D] = 4, [0x0E] = 16, [0x0F] = 32, [0x10] = 32, [0x11] = 256, [0x12] = 256,
     [0x13] = 4, [0x14] = 8, [0x15] = 512, [0x16] = 256, [0x17] = 2, [0x18] = 256, [0x19] = 4096, [0x1A] = 131072,

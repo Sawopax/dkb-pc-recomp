@@ -182,6 +182,9 @@ static void vp9_init(Cpu *c, uint64_t key, unsigned w, unsigned h) {
 static void ov_vp9_init(Cpu *c) { vp9_init(c, arg_x(c, 0), arg_x(c, 4) & 0xffff, arg_x(c, 5) & 0xffff); }
 // Result InitializeVp9Decoder(Vp9DecoderType *, size_t, size_t, u16 w, u16 h, u32, input, output fmt)
 static void ov_vp9_init_nowork(Cpu *c) { vp9_init(c, arg_x(c, 0), arg_x(c, 3) & 0xffff, arg_x(c, 4) & 0xffff); }
+// Result InitializeVp9Decoder(Vp9DecoderType *, size_t, u16 w, u16 h, u32, input, output fmt): the SDK of update 458752
+// dropped one size_t, so the picture size moves down one register.
+static void ov_vp9_init_nowork1(Cpu *c) { vp9_init(c, arg_x(c, 0), arg_x(c, 2) & 0xffff, arg_x(c, 3) & 0xffff); }
 
 // Result FinalizeVp9Decoder(Vp9DecoderType *)
 static void ov_vp9_fini(Cpu *c) {
@@ -365,12 +368,11 @@ static void ov_vp9_release(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result GetVp9DecoderOutputBufferProperties(u16 *w, u16 *h, u16 *, u16 *, nn::movie::ColorSpace *, TimeSpan *pts,
-// bool *end, Vp9DecoderType *, u32 index). The two unnamed u16 get the picture size too (aligned or display size).
-static void ov_vp9_props(Cpu *c) {
-    uint32_t i = (uint32_t)arg_x(c, 8);
+// Fills the four u16 size outputs (x0..x3) and the optional colour space, pts and end-of-stream outputs of slot `i` of
+// decoder `key`. `cs` < 0 means the signature has no colour space argument.
+static void vp9_props(Cpu *c, int cs, int pts, int end, uint64_t key, uint32_t i) {
     plat_mutex_lock(&lock);
-    Dec *d = dec_of(arg_x(c, 7));
+    Dec *d = dec_of(key);
     Slot s = d && i < SLOTS ? d->slot[i] : (Slot){0};
     plat_mutex_unlock(&lock);
     for (int k = 0; k < 4; k++) {
@@ -378,11 +380,17 @@ static void ov_vp9_props(Cpu *c) {
         if (p) *p = k & 1 ? s.h : s.w;
     }
     LOG_FIRST("codec: output properties: %ux%u", s.w, s.h);
-    if (arg_p(c, 4)) *(uint32_t *)arg_p(c, 4) = 0;
-    if (arg_p(c, 5)) *(int64_t *)arg_p(c, 5) = s.pts;
-    if (arg_p(c, 6)) *(uint8_t *)arg_p(c, 6) = (uint8_t)s.eos;
+    if (cs >= 0 && arg_p(c, cs)) *(uint32_t *)arg_p(c, cs) = 0;
+    if (arg_p(c, pts)) *(int64_t *)arg_p(c, pts) = s.pts;
+    if (arg_p(c, end)) *(uint8_t *)arg_p(c, end) = (uint8_t)s.eos;
     ret_x(c, d ? 0 : R_NOT_READY);
 }
+// Result GetVp9DecoderOutputBufferProperties(u16 *w, u16 *h, u16 *, u16 *, nn::movie::ColorSpace *, TimeSpan *pts,
+// bool *end, Vp9DecoderType *, u32 index). The two unnamed u16 get the picture size too (aligned or display size).
+static void ov_vp9_props(Cpu *c) { vp9_props(c, 4, 5, 6, arg_x(c, 7), (uint32_t)arg_x(c, 8)); }
+// The SDK of update 458752 dropped the colour space: (u16 *w, u16 *h, u16 *, u16 *, TimeSpan *pts, bool *end,
+// Vp9DecoderType *, u32 index), all in x0..x7.
+static void ov_vp9_props_nocs(Cpu *c) { vp9_props(c, -1, 4, 5, arg_x(c, 6), (uint32_t)arg_x(c, 7)); }
 
 // Result ReadDecoderOutputImageNv12(const VideoDecoderImagePoolType *, u32 image, u16 x, u16 y, u16 w, u16 h,
 // void *luma, size_t luma_pitch, size_t luma_size, void *chroma, size_t chroma_pitch, size_t chroma_size)
@@ -495,6 +503,8 @@ HOST_OVERRIDE("_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEPvmmttjN
               "24VideoDecoderOutputFormatE", ov_vp9_init);
 HOST_OVERRIDE("_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmmttjNS0_23VideoDecoderInputFormatENS0_"
               "24VideoDecoderOutputFormatE", ov_vp9_init_nowork);
+HOST_OVERRIDE("_ZN2nn5codec20InitializeVp9DecoderEPNS0_14Vp9DecoderTypeEmttjNS0_23VideoDecoderInputFormatENS0_"
+              "24VideoDecoderOutputFormatE", ov_vp9_init_nowork1);   // update 458752
 HOST_OVERRIDE("_ZN2nn5codec18FinalizeVp9DecoderEPNS0_14Vp9DecoderTypeE", ov_vp9_fini);
 HOST_OVERRIDE("_ZN2nn5codec15StartVp9DecoderEPNS0_14Vp9DecoderTypeE", ov_ok);
 HOST_OVERRIDE("_ZN2nn5codec14StopVp9DecoderEPNS0_14Vp9DecoderTypeE", ov_ok);
@@ -515,6 +525,8 @@ HOST_OVERRIDE("_ZN2nn5codec29ReleaseVp9DecoderOutputBufferEPNS0_14Vp9DecoderType
               ov_vp9_release);
 HOST_OVERRIDE("_ZN2nn5codec35GetVp9DecoderOutputBufferPropertiesEPtS1_S1_S1_PNS_5movie10ColorSpaceEPNS_8TimeSpanEPbPNS0_"
               "14Vp9DecoderTypeEj", ov_vp9_props);
+HOST_OVERRIDE("_ZN2nn5codec35GetVp9DecoderOutputBufferPropertiesEPtS1_S1_S1_PNS_8TimeSpanEPbPNS0_14Vp9DecoderTypeEj",
+              ov_vp9_props_nocs);   // update 458752
 HOST_OVERRIDE("_ZN2nn5codec26ReadDecoderOutputImageNv12EPKNS0_25VideoDecoderImagePoolTypeEjttttPvmmS4_mm", ov_read_nv12);
 HOST_OVERRIDE("_ZN2nn5codec36GetDecoderImagePoolNativeImageHandleEPKNS0_25VideoDecoderImagePoolTypeEj", ov_pool_image);
 HOST_OVERRIDE("_ZN2nn6syncpt3sdk20CreateSyncPointEventEPNS1_18SyncPointEventTypeE", ov_sp_create);

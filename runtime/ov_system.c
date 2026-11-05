@@ -790,6 +790,97 @@ HOST_OVERRIDE("_ZN2nn2oe24SetAlbumImageOrientationENS_5album16ImageOrientationE"
 HOST_OVERRIDE("_ZN2nn2oe31EnterExitRequestHandlingSectionEv", ov_exit_section);
 HOST_OVERRIDE("_ZN2nn2oe31LeaveExitRequestHandlingSectionEv", ov_exit_section);
 
+// void nn::oe::GetDisplayVersion(DisplayVersion *): char[16], the application's display version from its control data.
+// Imported by update 458752; the sdk's own version asks the oe service and faults on the host. The host has no control
+// data, so it answers TOTK_DISPLAY_VERSION (DKB_DISPLAY_VERSION) or "1.0.0", as BananaNative does for unknown builds
+// (dm/host/hle_sdk16.c, GetDisplayVersion).
+static void ov_display_version(Cpu *c) {
+    char *out = arg_p(c, 0);
+    if (!out) return;
+    const char *v = cfg_get("TOTK_DISPLAY_VERSION");
+    if (!v || !*v) v = "1.0.0";
+    memset(out, 0, 16);
+    strncpy(out, v, 15);
+}
+HOST_OVERRIDE("_ZN2nn2oe17GetDisplayVersionEPNS0_14DisplayVersionE", ov_display_version);
+
+// ---------- nn::streamplay (GameShare, Switch 2 SDKs; imported by update 458752)
+// The game calls GetRequiredMemorySize and Initialize at boot. In the sdk both open the "stpl:u" service, which the host
+// does not serve (sm: aborts on an unknown name), and the other calls abort through nn::diag when the library was not
+// initialized. The host has no GameShare: every call is answered here and the session stays disconnected, with no
+// guest pad, sensor or vibration device. The connection-state event is a real system event that is never signalled,
+// because the game polls it with TryWaitSystemEvent.
+// Result Initialize(StreamPlayType, StreamingMode, void *, size_t), void Finalize(), Result StartStreaming(),
+// Result OpenSessionWithMatchmakeSupport(SessionInfo *, const MatchmakeConfig &), void CloseSession(), the setters,
+// and every getter that returns a count, a style set, a handle or a hold type: 0
+static void ov_stpl_zero(Cpu *c) { ret_x(c, 0); }
+// void GuestVibrationTarget::GuestVibrationTarget() and its Set/Unset: the target is never used on the host
+static void ov_stpl_nop(Cpu *c) { (void)c; }
+// size_t GetRequiredMemorySize(StreamPlayType, StreamingMode, int): a small non-zero size, the buffer is never used
+static void ov_stpl_mem_size(Cpu *c) { ret_x(c, 0x1000); }
+// Result GetConnectionState(ConnectionState *): 0, disconnected
+static void ov_stpl_conn_state(Cpu *c) {
+    uint32_t *out = arg_p(c, 0);
+    if (out) *out = 0;
+    ret_x(c, 0);
+}
+// nn::os::SystemEventType *GetConnectionStateChangedEvent()
+static void ov_stpl_conn_event(Cpu *c) {
+    static uint64_t ev;
+    static PlatMutex elock = PLAT_MUTEX_INIT;
+    plat_mutex_lock(&elock);
+    if (!ev) ev = (uint64_t)(uintptr_t)mem_kernel_alloc(0x100, 16);
+    plat_mutex_unlock(&elock);
+    kern_bind_system_event(c, ev, 0);   // once per event, as runtime/ov_codec.c event_for does
+    ret_x(c, ev);
+}
+// void GetGuestVibrationDeviceInfo(hid::VibrationDeviceInfo *, const GuestVibrationDeviceHandle &): 8 bytes, unknown
+static void ov_stpl_vib_info(Cpu *c) {
+    uint8_t *info = arg_p(c, 0);
+    if (info) memset(info, 0, 8);
+}
+
+HOST_OVERRIDE("_ZN2nn10streamplay21GetRequiredMemorySizeENS0_14StreamPlayTypeENS0_13StreamingModeEi", ov_stpl_mem_size);
+HOST_OVERRIDE("_ZN2nn10streamplay10InitializeENS0_14StreamPlayTypeENS0_13StreamingModeEPvm", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay8FinalizeEv", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay14StartStreamingEv", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay31OpenSessionWithMatchmakeSupportEPNS0_11SessionInfoERKNS0_15MatchmakeConfigE",
+              ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay12CloseSessionEv", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay18GetConnectionStateEPNS0_15ConnectionStateE", ov_stpl_conn_state);
+HOST_OVERRIDE("_ZN2nn10streamplay30GetConnectionStateChangedEventEv", ov_stpl_conn_event);
+HOST_OVERRIDE("_ZN2nn10streamplay29SetSupportedGuestNpadStyleSetENS_4util10BitFlagSetILi32ENS_3hid12NpadStyleTagEEE",
+              ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay25SetSupportedHidFeatureSetENS_4util10BitFlagSetILi32ENS0_13HidFeatureTagEEE",
+              ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay23SetGuestNpadJoyHoldTypeENS_3hid15NpadJoyHoldTypeE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay23GetGuestNpadJoyHoldTypeEv", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay19GetGuestPadStyleSetERKNS0_10GuestPadIdE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay17GetGuestPadStatesEPNS0_13GuestPadStateINS_3hid16NpadFullKeyStateEEEiRKNS0_"
+              "10GuestPadIdE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay17GetGuestPadStatesEPNS0_13GuestPadStateINS_3hid16NpadJoyDualStateEEEiRKNS0_"
+              "10GuestPadIdE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay17GetGuestPadStatesEPNS0_13GuestPadStateINS_3hid16NpadJoyLeftStateEEEiRKNS0_"
+              "10GuestPadIdE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay17GetGuestPadStatesEPNS0_13GuestPadStateINS_3hid17NpadHandheldStateEEEiRKNS0_"
+              "10GuestPadIdE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay17GetGuestPadStatesEPNS0_13GuestPadStateINS_3hid17NpadJoyRightStateEEEiRKNS0_"
+              "10GuestPadIdE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay28GetGuestSixAxisSensorHandlesEPNS0_24GuestSixAxisSensorHandleEiRKNS0_10GuestPadIdENS_"
+              "4util10BitFlagSetILi32ENS_3hid12NpadStyleTagEEE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay27GetGuestSixAxisSensorStatesEPNS0_23GuestSixAxisSensorStateEiRKNS0_"
+              "24GuestSixAxisSensorHandleE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay30GetGuestVibrationDeviceHandlesEPNS0_26GuestVibrationDeviceHandleEiRKNS0_10GuestPadIdENS_"
+              "4util10BitFlagSetILi32ENS_3hid12NpadStyleTagEEE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay27GetGuestVibrationDeviceInfoEPNS_3hid19VibrationDeviceInfoERKNS0_"
+              "26GuestVibrationDeviceHandleE", ov_stpl_vib_info);
+HOST_OVERRIDE("_ZN2nn10streamplay20GuestVibrationTargetC1Ev", ov_stpl_nop);
+HOST_OVERRIDE("_ZN2nn10streamplay20GuestVibrationTarget29SetGuestVibrationDeviceHandleERKNS0_"
+              "26GuestVibrationDeviceHandleE", ov_stpl_nop);
+HOST_OVERRIDE("_ZN2nn10streamplay20GuestVibrationTarget31UnsetGuestVibrationDeviceHandleEv", ov_stpl_nop);
+HOST_OVERRIDE("_ZN2nn10streamplay18GetGuestJcmsHandleERKNS0_10GuestPadIdERKNS_3hid8JcmsTypeE", ov_stpl_zero);
+HOST_OVERRIDE("_ZN2nn10streamplay18GetGuestJcmsStatesEPNS0_14GuestJcmsStateEiRKNS0_15GuestJcmsHandleE", ov_stpl_zero);
+
 HOST_OVERRIDE("_ZN2nn2oe10InitializeEv", ov_oe_initialize);
 HOST_OVERRIDE("_ZN2nn2oe18GetDesiredLanguageEv", ov_desired_language);
 HOST_OVERRIDE("_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi", ov_performance_config);

@@ -505,6 +505,28 @@ static void ov_touch_state1(Cpu *c) {
 // always a full controller, so the assignment mode changes nothing
 static void ov_joy_assignment(Cpu *c) { ret_x(c, 0); }
 
+// Joy-Con 2 mouse sensor (JCMS). In 1.0.0 the game links nn::hid::InitializeJcms statically and
+// recomp/patches-dkb100.txt skips its call, because it opens the hid server proxy, which the host does not serve. Update
+// 458752 imports InitializeJcms and the rest of the JCMS API from the sdk instead, so the host answers them: no
+// controller of the host has the sensor. The handle layout (npad id in byte 0, JcmsType in byte 1) and "no states" as
+// the answer of GetJcmsStates follow BananaNative, dm/host/hle_hid.c, the JCMS block.
+// void InitializeJcms(void *work, size_t), void FinalizeJcms(), void StartJcms(const JcmsHandle &),
+// void StopJcms(const JcmsHandle &)
+static void ov_jcms_nop(Cpu *c) { (void)c; }
+// JcmsHandle GetJcmsHandle(const NpadIdType &, const JcmsType &)
+static void ov_jcms_handle(Cpu *c) {
+    const uint32_t *id = arg_p(c, 0), *type = arg_p(c, 1);
+    ret_x(c, (id ? *id & 0xff : 0) | (type ? (*type & 0xff) << 8 : 0));
+}
+// int GetJcmsStates(JcmsState *, int, const JcmsHandle &): no samples
+static void ov_jcms_states(Cpu *c) { ret_x(c, 0); }
+HOST_OVERRIDE("_ZN2nn3hid14InitializeJcmsEPvm", ov_jcms_nop);
+HOST_OVERRIDE("_ZN2nn3hid12FinalizeJcmsEv", ov_jcms_nop);
+HOST_OVERRIDE("_ZN2nn3hid9StartJcmsERKNS0_10JcmsHandleE", ov_jcms_nop);
+HOST_OVERRIDE("_ZN2nn3hid8StopJcmsERKNS0_10JcmsHandleE", ov_jcms_nop);
+HOST_OVERRIDE("_ZN2nn3hid13GetJcmsHandleERKjRKNS0_8JcmsTypeE", ov_jcms_handle);
+HOST_OVERRIDE("_ZN2nn3hid13GetJcmsStatesEPNS0_9JcmsStateEiRKNS0_10JcmsHandleE", ov_jcms_states);
+
 HOST_OVERRIDE("_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE", ov_six_start);
 HOST_OVERRIDE("_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE",
               ov_six_states_public);
