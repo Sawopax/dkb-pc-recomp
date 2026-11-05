@@ -1629,7 +1629,17 @@ int kern_svc(Cpu *c, uint32_t imm) {
     switch (imm) {
     case 0x08: {   // CreateThread(-> w1 handle; x1 entry, x2 arg, x3 stack top, w4 priority, w5 core)
         int prio = (int)x[4], core = (int)x[5];
+        // Switch 2 applications get more cores than the Switch's three (update 458752 creates threads past core 2).
+        // The host schedules three virtual cores, so cores 3-5 fold onto 0-2.
+        if (core >= 3 && core <= 5) {
+            static volatile int32_t folded;
+            if (!__atomic_exchange_n(&folded, 1, __ATOMIC_RELAXED))
+                rt_log("kernel: CreateThread on core %d: Switch 2 cores 3-5 run on host cores 0-2", core);
+            core -= 3;
+        }
         if (!x[1] || !x[3] || prio < 28 || prio > 59 || core < -3 || core > 2) {
+            rt_log("kernel: CreateThread refused: entry %#llx stack %#llx prio %d core %d", (unsigned long long)x[1],
+                   (unsigned long long)x[3], prio, core);
             x[0] = R_BAD_STATE;
             return 1;
         }

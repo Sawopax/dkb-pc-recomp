@@ -807,6 +807,23 @@ static void unmount(const char *name) {
         rt_fatal("fs: unmount of unknown mount %s", name ? name : "(null)");
 }
 
+// bool nn::fs::IsMounted(const char *name) (imported by update 458752): a host mount of that name, or the RomFS's
+static int is_mounted(const char *name) {
+    size_t n = name ? strlen(name) : 0;
+    if (!n || n >= 32) return 0;
+    int found = 0;
+    plat_mutex_lock_shared(&lock);
+    for (int i = 0; i < NMOUNTS && !found; i++)
+        if (mounts[i].kind && !strcmp(mounts[i].name, name)) found = 1;
+    plat_mutex_unlock_shared(&lock);
+    if (!found) {
+        char probe[40];
+        snprintf(probe, sizeof probe, "%s:", name);
+        found = romfs_owns(probe);
+    }
+    return found;
+}
+
 static uint32_t commit(const char *name) {
     int found = 0, save = 0;
     plat_mutex_lock_shared(&lock);
@@ -1111,6 +1128,7 @@ static void ov_ensure_save(Cpu *c) {
 }
 static void ov_mount_temp(Cpu *c) { ret_x(c, mount_temp(arg_p(c, 0))); }
 static void ov_unmount(Cpu *c) { unmount(arg_p(c, 0)); }
+static void ov_is_mounted(Cpu *c) { ret_x(c, (uint64_t)is_mounted(arg_p(c, 0))); }
 static void ov_commit(Cpu *c) { ret_x(c, commit(arg_p(c, 0))); }
 static void ov_create_cache(Cpu *c) { ret_x(c, create_cache(I32(0), I64(1), I64(2))); }
 static void ov_delete_cache(Cpu *c) { ret_x(c, delete_cache(I32(0))); }
@@ -1159,6 +1177,7 @@ static void ov_set_priority(Cpu *c) { (void)c; }
 #define S_QUERY_CACHE "_ZN2nn2fs22QueryMountRomCacheSizeEPm"
 #define S_INITIALIZE "_ZN2nn2fs24InitializeForApplicationEv"
 
+HOST_OVERRIDE("_ZN2nn2fs9IsMountedEPKc", ov_is_mounted);
 HOST_OVERRIDE(S_OPEN_FILE, ov_open_file);
 HOST_OVERRIDE(S_FILE_SIZE, ov_file_size);
 HOST_OVERRIDE(S_CLOSE_FILE, ov_close_file);

@@ -2309,7 +2309,28 @@ static int light_quad_fault_skip(const VkExec *ex, const GfxShader *vs, const Gf
     int n = gfx_shader_resources(fs, GFX_RES_SSBO, &r), lights = 0;
     for (int i = 0; i < n; i++) lights |= r[i].cbuf_slot == 0 && r[i].handle * 4 == 0x530;
     GfxShaderIo io[32];
-    if (!lights || !(gfx_shader_inputs(vs, io) >> 9 & 1)) return 0;
+    int loc9 = (int)(gfx_shader_inputs(vs, io) >> 9 & 1);
+    // DKB_FAULT_DIAG=1: list the first 24 distinct vertex stages with an input at Location 9 and their fragment stage's
+    // storage buffers, to find the family in a build whose constant buffer layout differs (update 458752)
+    static int diag = -1;
+    if (diag < 0) diag = cfg_bool("TOTK_FAULT_DIAG");
+    if (diag && loc9 && code) {
+        static uint64_t seen[24];
+        static int nseen;
+        uint64_t o = nvn2_origin(code);
+        int fresh = nseen < 24;
+        for (int i = 0; i < nseen && fresh; i++) fresh = seen[i] != o;
+        if (fresh) {
+            seen[nseen++] = o;
+            char b[256];
+            int p = 0;
+            for (int i = 0; i < n && p < (int)sizeof b - 24; i++)
+                p += snprintf(b + p, sizeof b - p, " c%d+%#x", r[i].cbuf_slot, r[i].handle * 4);
+            rt_log("fault diag: vertex stage %016llx reads Location 9; fragment storage buffers:%s",
+                   (unsigned long long)o, p ? b : " none");
+        }
+    }
+    if (!lights || !loc9) return 0;
     warn_once(W_FAULT_SKIP, "light-quad draws with ten instance streams are skipped on NVIDIA (#9; TOTK_FIX_VS_FAULT=0 draws them)");
     return 1;
 }

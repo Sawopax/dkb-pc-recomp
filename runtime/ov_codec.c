@@ -51,6 +51,7 @@ typedef struct {
     uint16_t w, h;
     int64_t pts;       // nanoseconds (nn::TimeSpan)
     int eos;
+    int flushed;       // a flush took its picture back: its fence still counts as passed (ov_gs_trywait)
     uint8_t *nv12;     // w*h luma, then cw*ch interleaved UV pairs
 } Slot;
 
@@ -148,7 +149,7 @@ static int decode_into(Dec *d, Slot *s, const uint8_t *data, size_t size, int64_
     LOG_FIRST("codec: first VP9 packet: %zu bytes, picture %ux%u", size, s->w, s->h);
     int n = 0;
     if (filled) {
-        s->state = S_FILLED, s->pts = pts, s->eos = end;
+        s->state = S_FILLED, s->pts = pts, s->eos = end, s->flushed = 0;
         for (int k = 0; k < WAITERS; k++)
             if (s->waiter[k]) wake[n++] = s->waiter[k];
         memset(s->waiter, 0, sizeof s->waiter);
@@ -207,7 +208,8 @@ static void ov_vp9_flush(Cpu *c) {
     Dec *d = dec_of(arg_x(c, 0));
     if (d)
         for (int i = 0; i < SLOTS; i++)
-            if (d->slot[i].state == S_FILLED) d->slot[i].state = S_WAIT;   // still reserved; its picture is dropped
+            if (d->slot[i].state == S_FILLED)   // still reserved; its picture is dropped
+                d->slot[i].state = S_WAIT, d->slot[i].flushed = 1;
     if (d) queue_drop(d);   // and so are the packets not decoded yet
     plat_mutex_unlock(&lock);
     TRACE("flush");
@@ -335,7 +337,7 @@ static void ov_vp9_acquire(Cpu *c) {
         if (d->slot[i].pool && d->slot[i].state == S_FREE) got = i;
     if (got >= 0) {
         Slot *s = &d->slot[got];
-        s->state = S_WAIT, s->seq = d->seq++, s->eos = 0;
+        s->state = S_WAIT, s->seq = d->seq++, s->eos = 0, s->flushed = 0;
         memset(s->waiter, 0, sizeof s->waiter);
         *index = (uint32_t)got;
         if (fence) *fence = FENCE_TAG | (uint32_t)(d - decs) << 8 | (uint32_t)got;
@@ -483,6 +485,24 @@ static void ov_sp_request(Cpu *c) {
     TRACE("sync point request %#x: %s", tok, now ? "signalled at once" : "waits for its picture");
     if (now) kern_signal_system_event(ev);
 }
+// bool nn::gs::TryWaitNativeSync(const NativeSyncHandle &): update 458752's player polls the decoder fence with this
+// instead of a sync point event; the sdk's version asks a sync point service the host does not load. A decoder fence
+// (FENCE_TAG) has passed once its buffer holds a picture, anything else at once, as in ov_sp_request. A flush does not
+// undo a fence that passed: at the end of a guide movie the player flushes while it still holds a buffer whose fence it
+// saw pass, then pops that buffer and aborts if the fence reads as pending (main+0xe1aedc in update 458752).
+static void ov_gs_trywait(Cpu *c) {
+    const uint32_t *h = arg_p(c, 0);
+    uint32_t tok = h ? *h : 0;
+    int done = 1;
+    if ((tok & 0xffff0000u) == FENCE_TAG && (tok >> 8 & 0xff) < DECODERS && (tok & 0xff) < SLOTS) {
+        plat_mutex_lock(&lock);
+        const Slot *s = &decs[tok >> 8 & 0xff].slot[tok & 0xff];
+        done = s->state != S_WAIT || s->flushed;
+        plat_mutex_unlock(&lock);
+    }
+    TRACE("native sync %#x: %s", tok, done ? "passed" : "pending");
+    ret_x(c, (uint64_t)done);
+}
 // void CancelSyncPointEvent(SyncPointEventType *): the request is dropped and the event cleared
 static void ov_sp_cancel(Cpu *c) {
     uint64_t ev = event_for(c, arg_x(c, 0));
@@ -533,6 +553,7 @@ HOST_OVERRIDE("_ZN2nn6syncpt3sdk20CreateSyncPointEventEPNS1_18SyncPointEventType
 HOST_OVERRIDE("_ZN2nn6syncpt3sdk25InitializeMultiWaitHolderEPNS_2os19MultiWaitHolderTypeEPNS1_18SyncPointEventTypeE",
               ov_sp_holder);
 HOST_OVERRIDE("_ZN2nn6syncpt3sdk21TryWaitSyncPointEventEPKNS1_18SyncPointEventTypeE", ov_sp_trywait);
+HOST_OVERRIDE("_ZN2nn2gs17TryWaitNativeSyncERKNS0_16NativeSyncHandleE", ov_gs_trywait);   // update 458752
 HOST_OVERRIDE("_ZN2nn6syncpt3sdk21RequestSyncPointEventEPNS1_18SyncPointEventTypeERKNS1_15SyncPointHandleE",
               ov_sp_request);
 HOST_OVERRIDE("_ZN2nn6syncpt3sdk20CancelSyncPointEventEPNS1_18SyncPointEventTypeE", ov_sp_cancel);

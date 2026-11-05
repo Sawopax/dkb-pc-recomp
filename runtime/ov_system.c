@@ -305,6 +305,59 @@ static void ov_aoc_list(Cpu *c) {
     if (offset < 0 || count < 0) rt_fatal("aoc: ListAddOnContent range %d+%d", offset, count);
     ret_x(c, 0);
 }
+// Update 458752 asks about its add-on content at boot (main+0x5bf46c); the sdk's versions ask the aoc service, which
+// the host does not serve. Until the host mounts a dumped add-on, there is none.
+// int CountAddOnContent()
+static void ov_aoc_count(Cpu *c) { ret_x(c, 0); }
+// void ShowAddOnContentLostError(const char *, int): nothing was lost
+static void ov_aoc_lost(Cpu *c) { (void)c; }
+// Result nn::fs::QueryMountAddOnContentCacheSize(size_t *, AddOnContentIndex): no cache needed
+static void ov_aoc_cache_size(Cpu *c) {
+    uint64_t *out = arg_p(c, 0);
+    if (out) *out = 0;
+    ret_x(c, 0);
+}
+// nn::nifm (network connection), imported by update 458752 at boot (main+0x5c40cc); the sdk's Initialize opens
+// "nifm:u", which the host does not serve. The host offers no network to the game: it runs offline.
+// Result Initialize()
+static void ov_nifm_initialize(Cpu *c) { rt_log("nifm: no network (the game runs offline)"); ret_x(c, 0); }
+// bool IsNetworkAvailable()
+static void ov_nifm_available(Cpu *c) { ret_x(c, 0); }
+// void SubmitNetworkRequestAndWait(): the request ends at once, unavailable
+static void ov_nifm_submit(Cpu *c) { (void)c; }
+// Result HandleNetworkRequestErrorResult(): no error applet on the host; the error counts as handled
+static void ov_nifm_handle_error(Cpu *c) { ret_x(c, 0); }
+// ---------- Online services update 458752 imports (data delivery, shop, Nintendo Account profile, HDR layer metadata)
+// Their sdk versions open services the host does not serve (bcat:u at main+0x5c40d0, then ec, acc). The host is
+// offline: each call succeeds where an offline console's would and fails where it would fail, with the generic failure
+// BananaNative answers for features it cuts (dm/host/hle_misc.c, hle_offline.c, hle_account.c: RES_FAIL).
+#define R_OFFLINE 0x2a2
+static void ov_off_nop(Cpu *c) { (void)c; }
+static void ov_off_ok(Cpu *c) { ret_x(c, 0); }
+static void ov_off_fail(Cpu *c) { ret_x(c, R_OFFLINE); }
+// Result DeliveryCacheFile::Read(size_t *read, int64_t offset, void *, size_t), ShopServiceAccessor::AsyncResponse::
+// GetSize(size_t *): nothing read, failure
+static void ov_off_fail_zero_out(Cpu *c) {
+    uint64_t *out = arg_p(c, 1);
+    if (out) *out = 0;
+    ret_x(c, R_OFFLINE);
+}
+// DeliveryCacheProgressStatus DeliveryCacheProgress::GetStatus() const: 9, done (nothing to download)
+static void ov_bcat_progress_status(Cpu *c) { ret_x(c, 9); }
+// Result CachedNintendoAccountInfo::Get{Country,Birthday,Region}(u64 *) const: never reached after the failed load
+static void ov_na_info_get(Cpu *c) {
+    uint64_t *out = arg_p(c, 1);
+    if (out) *out = 0;
+    ret_x(c, R_OFFLINE);
+}
+
+// Result nn::fs::MountAddOnContent(const char *name, AddOnContentIndex, void *cache, size_t): never reached while
+// CountAddOnContent answers 0; if it is, the add-on is not there (fs ResultTargetNotFound, module 2 description 1)
+static void ov_aoc_mount(Cpu *c) {
+    const char *name = arg_p(c, 0);
+    rt_log("aoc: MountAddOnContent(\"%s\", %d): no add-on content on the host", name ? name : "", (int)arg_x(c, 1));
+    ret_x(c, 0x202);
+}
 static void ov_err_context(Cpu *c) { (void)c; rt_log("err: error contexts stay local"); }
 static void ov_pctl_initialize(Cpu *c) { (void)c; rt_log("pctl: no parental controls"); }
 static void ov_abort_observer(Cpu *c) { (void)c; rt_log("diag: the host crash reporter observes aborts"); }
@@ -928,6 +981,53 @@ HOST_OVERRIDE("_ZN2nn3err9ShowErrorENS_6ResultE", ov_show_error);
 HOST_OVERRIDE("nndiagStartup", ov_diag_startup);
 HOST_OVERRIDE("_ZN2nn3aoc10InitializeEv", ov_aoc_initialize);
 HOST_OVERRIDE("_ZN2nn3aoc16ListAddOnContentEPiii", ov_aoc_list);
+HOST_OVERRIDE("_ZN2nn3aoc17CountAddOnContentEv", ov_aoc_count);
+// bcat (data delivery): no delivery cache on the host
+HOST_OVERRIDE("_ZN2nn4bcat10InitializeEv", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat25MountDeliveryCacheStorageEv", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn4bcat27UnmountDeliveryCacheStorageEv", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat24RequestSyncDeliveryCacheEPNS0_21DeliveryCacheProgressE", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn4bcat24RequestSyncDeliveryCacheEPNS0_21DeliveryCacheProgressEPKc", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn4bcat30CancelSyncDeliveryCacheRequestEv", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat21DeliveryCacheProgressC1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat21DeliveryCacheProgressD1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat21DeliveryCacheProgress6UpdateEv", ov_off_nop);
+HOST_OVERRIDE("_ZNK2nn4bcat21DeliveryCacheProgress9GetStatusEv", ov_bcat_progress_status);
+HOST_OVERRIDE("_ZN2nn4bcat17DeliveryCacheFileC1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat17DeliveryCacheFileD1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4bcat17DeliveryCacheFile4OpenEPKc", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn4bcat17DeliveryCacheFile4ReadEPmlPvm", ov_off_fail_zero_out);
+HOST_OVERRIDE("_ZN2nn4bcat17DeliveryCacheFile5CloseEv", ov_off_nop);
+// ec (shop): the library starts, every shop request fails
+HOST_OVERRIDE("_ZN2nn2ec33InitializeForShopServiceAccessorsEPvm", ov_off_ok);
+HOST_OVERRIDE("_ZN2nn2ec31FinalizeForShopServiceAccessorsEv", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessorC1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessor10InitializeERKNS0_11ShopServiceE", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessor7RequestEPNS1_13AsyncResponseERKNS_7account3UidENS0_11ShopService6Method"
+              "EPKcRKNS1_8PostDataENS_8TimeSpanE", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessor13AsyncResponseC1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessor13AsyncResponseD1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessor13AsyncResponse7GetSizeEPm", ov_off_fail_zero_out);
+HOST_OVERRIDE("_ZN2nn2ec19ShopServiceAccessor13AsyncResponse3GetEPvm", ov_off_fail);
+HOST_OVERRIDE("_ZN2nn2ec22ShowShopProductDetailsENS0_5NsUidERKNS_7account10UserHandleE", ov_off_nop);
+// account: no Nintendo Account is linked and no network service account is available
+HOST_OVERRIDE("_ZN2nn7account25CachedNintendoAccountInfoC1Ev", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn7account29LoadCachedNintendoAccountInfoEPNS0_25CachedNintendoAccountInfoERKNS0_10UserHandleEPvm",
+              ov_off_fail);
+HOST_OVERRIDE("_ZN2nn7account36EnsureNetworkServiceAccountAvailableERKNS0_10UserHandleE", ov_off_fail);
+HOST_OVERRIDE("_ZNK2nn7account25CachedNintendoAccountInfo10GetCountryEPm", ov_na_info_get);
+HOST_OVERRIDE("_ZNK2nn7account25CachedNintendoAccountInfo11GetBirthdayEPm", ov_na_info_get);
+HOST_OVERRIDE("_ZNK2nn7account25CachedNintendoAccountInfo9GetRegionEPm", ov_na_info_get);
+// vi: the host presents SDR, HDR layer metadata is dropped
+HOST_OVERRIDE("_ZN2nn2vi35SetLayerNextHdrContentGamutMetadataEPNS0_5LayerENS0_15HdrContentGamutE", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn2vi39SetLayerNextHdrToSdrToneMappingMetadataEPNS0_5LayerENS0_14HdrToneMappingE", ov_off_nop);
+HOST_OVERRIDE("_ZN2nn4nifm10InitializeEv", ov_nifm_initialize);
+HOST_OVERRIDE("_ZN2nn4nifm18IsNetworkAvailableEv", ov_nifm_available);
+HOST_OVERRIDE("_ZN2nn4nifm27SubmitNetworkRequestAndWaitEv", ov_nifm_submit);
+HOST_OVERRIDE("_ZN2nn4nifm31HandleNetworkRequestErrorResultEv", ov_nifm_handle_error);
+HOST_OVERRIDE("_ZN2nn3aoc25ShowAddOnContentLostErrorEPKii", ov_aoc_lost);
+HOST_OVERRIDE("_ZN2nn2fs31QueryMountAddOnContentCacheSizeEPmi", ov_aoc_cache_size);
+HOST_OVERRIDE("_ZN2nn2fs17MountAddOnContentEPKciPvm", ov_aoc_mount);
 HOST_OVERRIDE("_ZN2nn3err26InitializeContextWriterApiEv", ov_err_context);
 HOST_OVERRIDE("_ZN2nn4pctl10InitializeEv", ov_pctl_initialize);
 HOST_OVERRIDE("_ZN2nn4diag34InitializeApplicationAbortObserverEv", ov_abort_observer);
