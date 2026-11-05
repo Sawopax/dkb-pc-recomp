@@ -19,6 +19,8 @@ NVN_API(nvnQueueBuilderSetRayTracingMemorySize) { (void)c; }
 NVN_API(nvnQueueBuilderGetRayTracingMemorySize) { ret_x(c, 0); }
 // size_t nvnQueueGetTotalRayTracingMemoryUsed(const NVNqueue *q)
 NVN_API(nvnQueueGetTotalRayTracingMemoryUsed) { ret_x(c, 0); }
+// const NVNqueue *nvnQueueBuilderGetPrimaryQueue(const NVNqueueBuilder *b): the builder keeps none (update 458752)
+NVN_API(nvnQueueBuilderGetPrimaryQueue) { ret_x(c, 0); }
 
 // ---- Device
 // int nvnDeviceGetFlags(const NVNdevice *d): the flags the device was initialized with
@@ -29,6 +31,9 @@ NVN_API(nvnDeviceRegisterFastClearColorIndex) { ret_x(c, 0); }
 NVN_API(nvnDeviceRegisterFastClearColoriIndex) { ret_x(c, 0); }
 NVN_API(nvnDeviceRegisterFastClearColoruiIndex) { ret_x(c, 0); }
 NVN_API(nvnDeviceRegisterFastClearStencil) { ret_x(c, 0); }
+// ...DepthIndex and ...StencilIndex (update 458752): not registered either
+NVN_API(nvnDeviceRegisterFastClearDepthIndex) { ret_x(c, 0); }
+NVN_API(nvnDeviceRegisterFastClearStencilIndex) { ret_x(c, 0); }
 
 // ---- Device message buffer (driver debug messages): the host driver writes none
 NVN_API(nvnDeviceMessageBufferSetDefaults) { (void)c; }
@@ -43,6 +48,42 @@ NVN_API(nvnDeviceMessageBufferGetNextMessage) { ret_x(c, 0); }
 // ---- Multisample state: coverage truncation is a hint the Vulkan back end has no switch for
 NVN_API(nvnMultisampleStateSetCoverageTruncationEnable) { (void)c; }
 NVN_API(nvnMultisampleStateGetCoverageTruncationEnable) { ret_x(c, 0); }
+// void nvnMultisampleStateGetSampleLocations(const NVNmultisampleState *, int start, int count, float *xy): the host
+// keeps no programmable locations (SetSampleLocations is ignored in nvn_api_obj.c), so every sample reads as the
+// pixel centre. At most 16 samples.
+NVN_API(nvnMultisampleStateGetSampleLocations) {
+    int start = (int)arg_x(c, 1), count = (int)arg_x(c, 2);
+    float *xy = arg_p(c, 3);
+    if (!xy || start < 0 || count <= 0) return;
+    if (count > 16) count = 16;
+    for (int i = 0; i < 2 * count; i++) xy[i] = 0.5f;
+}
+
+// ---- Program builder ray-tracing modules: no ray tracing on the host, so no modules (update 458752)
+NVN_API(nvnProgramBuilderGetRayTracingModuleCount) { ret_x(c, 0); }
+NVN_API(nvnProgramBuilderGetRayTracingModuleData) { ret_x(c, 0); }
+
+// ---- Dirty tile map parameters (update 458752): their only user, nvnCommandBufferComputeDirtyTileMapEx, is not
+// recorded, so the setters keep nothing and the getters read zero
+NVN_API(nvnDirtyTileMapParametersSetDefaults) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersSetConstantColorTable) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersSetDepthStencilMask) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersSetExpandFootprint) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersSetInputs) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersSetOutputs) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersSetTexture) { (void)c; }
+NVN_API(nvnDirtyTileMapParametersGetConstantColorTable) { ret_x(c, 0); }
+NVN_API(nvnDirtyTileMapParametersGetDepthStencilMask) { ret_x(c, 0); }
+NVN_API(nvnDirtyTileMapParametersGetExpandFootprint) { ret_x(c, 0); }
+NVN_API(nvnDirtyTileMapParametersGetInputs) { ret_x(c, 0); }
+NVN_API(nvnDirtyTileMapParametersGetOutputs) { ret_x(c, 0); }
+NVN_API(nvnDirtyTileMapParametersGetTexture) { ret_x(c, 0); }
+
+// ---- DLSS network queries and resize (update 458752): the host never initializes a DLSS network, so these are
+// reached only if the game asks about one it did not make; they answer nothing and fail
+NVN_API(nvnDlssNetworkBuilderGetTextureIDs) { ret_x(c, 0); }
+NVN_API(nvnDlssNetworkBuilderGetTexturePool) { ret_x(c, 0); }
+NVN_API(nvnDlssNetworkResize) { ret_x(c, 0); }
 
 // ---- Window colour space and HDR metadata: the host presents SDR sRGB
 // void nvnWindowBuilderSetColorSpace(NVNwindowBuilder *, NVNcolorSpace), NVNcolorSpace ...GetColorSpace(...): 0, sRGB
@@ -78,6 +119,13 @@ NVN_API(nvnCommandBufferSetComputeOverlapMode) { (void)c; }
     }
 NVN2_MODE_NOT_RECORDED(nvnCommandBufferSetRecordingMode, NVN_MODE_RECORDING)
 NVN2_NOT_RECORDED(nvnCommandBufferBeginDeviceCommands)
+// New in update 458752 (NVN API 231.30)
+NVN2_NOT_RECORDED(nvnCommandBufferComputeDirtyTileMapEx)
+NVN2_NOT_RECORDED(nvnCommandBufferGetAccelerationStructureVisualizationData)
+NVN2_NOT_RECORDED(nvnCommandBufferSetComputeWorkloadPriority)
+NVN2_NOT_RECORDED(nvnCommandBufferSetGraphicsWorkloadPriority)
+NVN2_NOT_RECORDED(nvnCommandBufferSetResourceOccupancy)
+NVN2_NOT_RECORDED(nvnCommandBufferSetFloatBlendClamp)
 NVN2_NOT_RECORDED(nvnCommandBufferEndDeviceCommands)
 NVN2_NOT_RECORDED(nvnCommandBufferSubmitDeviceCommands)
 NVN2_NOT_RECORDED(nvnCommandBufferBindAccelerationStructure)
