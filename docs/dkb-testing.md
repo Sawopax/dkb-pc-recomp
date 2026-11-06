@@ -11,7 +11,8 @@ executable, not the generated code, not the shader cache.
 - A GPU with Vulkan 1.3 and a current driver.
 - About 15 GB free for the build (the packed RomFS is about 9 GB), besides the space your dump takes.
 - *Donkey Kong Bananza* base version 1.0.0, dumped from your own Switch 2: the ExeFS (`main`, `sdk`, `main.npdm`) and
-  the RomFS as a folder. Update 458752 is not supported yet. This project does not explain how to dump the game.
+  the RomFS as a folder. Update 458752 also builds and runs (see "Update 458752 and its add-on content" below).
+  This project does not explain how to dump the game.
   If your dump is a single `.nup` file (the container Eglantine and Eden load), `tools/extract_nup.py` writes both
   folders from its base package: `python tools\extract_nup.py <game>.nup --list` shows the packages, and
   `python tools\extract_nup.py <game>.nup --out build\extracted\dkb100-dump` writes `exefs` and `romfs` there, checking
@@ -26,6 +27,34 @@ The generation command must include `--patches recomp\patches-dkb100.txt`. This 
 that bypasses the game's HID server proxy, which the host does not implement. If you generated the code without
 that argument, rerun the README's generation command with it and then rebuild with `tools\build_game.py`.
 Rebuilding alone leaves the unpatched generated code in place and the game stops during controller setup.
+
+## Update 458752 and its add-on content
+
+Update 458752 lifts with the same generator and no patch table: its controller setup goes through host answers
+instead of `patches-dkb100.txt`. With the update's ExeFS and RomFS folders:
+
+```
+.venv\Scripts\python recomp\gen.py --exefs <update exefs> --out generated\dkb458752 --modules main,sdk
+.venv\Scripts\python tools\dkb_expected.py --exefs <update exefs> --name dkb458752 --display 458752
+.venv\Scripts\python tools\dkb_pack_romfs.py --dir <update romfs folder> --out build\extracted\dkb458752\romfs
+.venv\Scripts\python tools\build_game.py --version dkb458752 --expected tools\data\expected-dkb458752.json --exefs <update exefs> --romfs build\extracted\dkb458752\romfs
+```
+
+The update's RomFS must be the full one the update ships (its build id is checked against `main`). The game runs
+offline: no network, shop, data delivery or Nintendo Account.
+
+Its add-on content (index 1, mounted by the game as `EmeraldRush`) is optional. Pack your own dump of the add-on's
+RomFS and point `DKB_DLC` at the folder:
+
+```
+.venv\Scripts\python tools\dkb_pack_romfs.py --dir <add-on romfs folder> --out build\extracted\dkb458752\aoc1
+.venv\Scripts\python tools\romfs_index.py --romfs build\extracted\dkb458752\aoc1 --out build\extracted\dkb458752\aoc1
+set DKB_DLC=%CD%\build\extracted\dkb458752\aoc1
+build\dkb458752\dkb.exe
+```
+
+Without `DKB_DLC` the game reports no add-on. The log shows `fs mount EmeraldRush: -> add-on content 1` when it is
+mounted.
 
 ## Run
 

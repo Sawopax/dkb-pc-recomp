@@ -127,7 +127,8 @@ RAM, so 16 GB is the minimum for now. Running and testing: [docs/dkb-testing.md]
 **Will there be a download?** No. The executable is made from the game's own code, so it cannot be shared. Everyone
 builds it from their own dump; the installer does this for you ([docs/installer.md](docs/installer.md)).
 
-**Which version of the game?** Base 1.0.0. Update 458752 has a different layout and is not supported yet.
+**Which version of the game?** Base 1.0.0, and update 458752 with or without its add-on content
+([docs/dkb-testing.md](docs/dkb-testing.md)).
 
 **Linux?** TotK Recomp's toolchain supports Linux, so it is possible; nobody has tried with Bananza yet.
 
