@@ -43,6 +43,21 @@ int romfs_xbox_prompts_active(void);                       // and was loaded (pa
 const char *romfs_overlay(size_t k, const char **file, uint64_t *size, int *is_added);   // RomFS path of overlay k
 void fs_trace(const char *what, const char *path);         // TOTK_TRACE=fs: one line per open
 
+// ---- romfs_aoc.c: the add-on content (DLC) volume, TOTK_DLC=<dir with romfs.bin and romfs-index.bin>
+// Handles 0x1_8000_0000 + j, between the game RomFS's and the host files'.
+#define AOC_HANDLE_BASE 0x180000000ull
+int aoc_count(void);                                       // 1 when the add-on loaded and passed its checks, else 0
+int aoc_list(int *out, int offset, int count);             // nn::aoc::ListAddOnContent: the add-on's index
+uint32_t aoc_mount(const char *name, int index);           // nn::fs::MountAddOnContent
+void aoc_unmount(void);
+int aoc_owns(const char *path);                            // path is on the mounted add-on ("<mount>:...")
+int aoc_handle(uint64_t h);
+uint32_t aoc_open(uint64_t *out, const char *path, int mode);
+uint32_t aoc_read(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uint64_t size);
+uint32_t aoc_size(int64_t *out, uint64_t h);
+void aoc_close(uint64_t h);
+uint32_t aoc_entry_type(int *out, const char *path);
+
 // ---- fs_host.c
 void fs_host_set_profile(const char *dir);                 // profile directory; before the first storage mount only
                                                            // (default rt_config()->profile)

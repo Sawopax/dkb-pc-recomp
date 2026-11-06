@@ -605,7 +605,7 @@ static uint32_t mount_add(const char *name, int kind, const char *root) {
     if (!name || !*name || strlen(name) >= 32 || strchr(name, ':') || strchr(name, '/')) return FS_R_INVALID_ARGUMENT;
     char as_path[40];
     snprintf(as_path, sizeof as_path, "%s:", name);
-    if (romfs_owns(as_path)) return FS_R_ALREADY_EXISTS;   // the RomFS mount's name
+    if (romfs_owns(as_path) || aoc_owns(as_path)) return FS_R_ALREADY_EXISTS;   // the RomFS or add-on mount's name
     plat_mutex_lock(&lock);
     int slot = -1;
     for (int i = 0; i < NMOUNTS; i++) {
@@ -803,7 +803,12 @@ static void unmount(const char *name) {
     plat_mutex_unlock(&tx_lock);
     size_t n = name ? strlen(name) : 0;
     char probe[40];
-    if (!n || n >= 32 || (snprintf(probe, sizeof probe, "%s:", name), !romfs_owns(probe)))
+    if (n && n < 32 && (snprintf(probe, sizeof probe, "%s:", name), aoc_owns(probe))) {
+        aoc_unmount();
+        rt_log("fs unmount %s", name);
+        return;
+    }
+    if (!n || n >= 32 || !romfs_owns(probe))
         rt_fatal("fs: unmount of unknown mount %s", name ? name : "(null)");
 }
 
@@ -819,7 +824,7 @@ static int is_mounted(const char *name) {
     if (!found) {
         char probe[40];
         snprintf(probe, sizeof probe, "%s:", name);
-        found = romfs_owns(probe);
+        found = romfs_owns(probe) || aoc_owns(probe);
     }
     return found;
 }
@@ -862,6 +867,7 @@ static int64_t host_read_at(PlatFile *f, void *buf, uint32_t n, uint64_t off) {
 
 static uint32_t open_file(uint64_t *out, const char *path, int mode) {
     if (romfs_owns(path)) return romfs_open(out, path, mode);
+    if (aoc_owns(path)) return aoc_open(out, path, mode);
     fs_trace(mode & FS_OPEN_WRITE ? "write" : "read", path);
     if (!out || !(mode & (FS_OPEN_READ | FS_OPEN_WRITE)) || (mode & ~7)) return FS_R_INVALID_ARGUMENT;
     char p[PATH_CAP];
@@ -892,6 +898,7 @@ static uint32_t open_file(uint64_t *out, const char *path, int mode) {
 
 static uint32_t read_file(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uint64_t size) {
     if (romfs_handle(h)) return romfs_read(out, h, offset, buffer, size);
+    if (aoc_handle(h)) return aoc_read(out, h, offset, buffer, size);
     PlatFile *f;
     int mode;
     if (!out || offset < 0 || (!buffer && size) || !file_of(h, &f, &mode)) return FS_R_INVALID_ARGUMENT;
@@ -936,6 +943,7 @@ static uint32_t write_file(uint64_t h, int64_t offset, const void *buffer, uint6
 
 static uint32_t file_size(int64_t *out, uint64_t h) {
     if (romfs_handle(h)) return romfs_size(out, h);
+    if (aoc_handle(h)) return aoc_size(out, h);
     PlatFile *f;
     PlatFileId id;
     if (!out || !file_of(h, &f, NULL) || !plat_file_id(f, &id)) return FS_R_INVALID_ARGUMENT;
@@ -962,6 +970,10 @@ static uint32_t flush_file(uint64_t h) {
 }
 
 static void close_file(uint64_t h) {
+    if (aoc_handle(h)) {
+        aoc_close(h);
+        return;
+    }
     if (romfs_handle(h)) {
         romfs_close(h);
         return;
@@ -1013,6 +1025,7 @@ static uint32_t rename_file(const char *from, const char *to) {
 
 static uint32_t entry_type(int *out, const char *path) {
     if (romfs_owns(path)) return romfs_entry_type(out, path);
+    if (aoc_owns(path)) return aoc_entry_type(out, path);
     char p[PATH_CAP];
     uint32_t r = host_path(path, p, sizeof p);
     if (r) return r;
@@ -1043,7 +1056,8 @@ static uint32_t delete_recursive(const char *path) {
 }
 
 static uint32_t open_directory(uint64_t *out, const char *path, int mode) {
-    if (romfs_owns(path)) rt_fatal("fs: OpenDirectory on the RomFS (%s) is not implemented", path);
+    if (romfs_owns(path) || aoc_owns(path))
+        rt_fatal("fs: OpenDirectory on the RomFS or add-on (%s) is not implemented", path);
     char p[PATH_CAP];
     uint32_t r = host_path(path, p, sizeof p);
     if (r) return r;

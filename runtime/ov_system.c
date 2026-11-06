@@ -297,18 +297,18 @@ static void ov_show_error(Cpu *c) {
 
 // ==== SDK-internal initialisation (services.c)
 static void ov_diag_startup(Cpu *c) { (void)c; rt_log("diag: host diagnostics"); }
-static void ov_aoc_initialize(Cpu *c) { (void)c; rt_log("aoc: no add-on content"); }
+static void ov_aoc_initialize(Cpu *c) { (void)c; rt_log("aoc: %s", aoc_count() ? "add-on content 1 present (TOTK_DLC)" : "no add-on content"); }
 // 1.4.3's main lists add-on content (MNG services.c host_aoc_list): there is none.
 // int ListAddOnContent(AddOnContentIndex *out, int offset, int count)
 static void ov_aoc_list(Cpu *c) {
     int offset = (int)arg_x(c, 1), count = (int)arg_x(c, 2);
     if (offset < 0 || count < 0) rt_fatal("aoc: ListAddOnContent range %d+%d", offset, count);
-    ret_x(c, 0);
+    ret_x(c, (uint64_t)aoc_list(arg_p(c, 0), offset, count));
 }
 // Update 458752 asks about its add-on content at boot (main+0x5bf46c); the sdk's versions ask the aoc service, which
-// the host does not serve. Until the host mounts a dumped add-on, there is none.
+// the host does not serve. The host answers from the add-on it was given (TOTK_DLC, runtime/romfs_aoc.c), else none.
 // int CountAddOnContent()
-static void ov_aoc_count(Cpu *c) { ret_x(c, 0); }
+static void ov_aoc_count(Cpu *c) { ret_x(c, (uint64_t)aoc_count()); }
 // void ShowAddOnContentLostError(const char *, int): nothing was lost
 static void ov_aoc_lost(Cpu *c) { (void)c; }
 // Result nn::fs::QueryMountAddOnContentCacheSize(size_t *, AddOnContentIndex): no cache needed
@@ -351,13 +351,9 @@ static void ov_na_info_get(Cpu *c) {
     ret_x(c, R_OFFLINE);
 }
 
-// Result nn::fs::MountAddOnContent(const char *name, AddOnContentIndex, void *cache, size_t): never reached while
-// CountAddOnContent answers 0; if it is, the add-on is not there (fs ResultTargetNotFound, module 2 description 1)
-static void ov_aoc_mount(Cpu *c) {
-    const char *name = arg_p(c, 0);
-    rt_log("aoc: MountAddOnContent(\"%s\", %d): no add-on content on the host", name ? name : "", (int)arg_x(c, 1));
-    ret_x(c, 0x202);
-}
+// Result nn::fs::MountAddOnContent(const char *name, AddOnContentIndex, void *cache, size_t): the add-on volume of
+// runtime/romfs_aoc.c, or ResultTargetNotFound when the host has no add-on of that index
+static void ov_aoc_mount(Cpu *c) { ret_x(c, aoc_mount(arg_p(c, 0), (int)arg_x(c, 1))); }
 static void ov_err_context(Cpu *c) { (void)c; rt_log("err: error contexts stay local"); }
 static void ov_pctl_initialize(Cpu *c) { (void)c; rt_log("pctl: no parental controls"); }
 static void ov_abort_observer(Cpu *c) { (void)c; rt_log("diag: the host crash reporter observes aborts"); }
