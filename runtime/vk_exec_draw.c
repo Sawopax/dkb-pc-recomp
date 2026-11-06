@@ -52,7 +52,7 @@ static void c0_lay_set(VkExec *ex, const GfxShader *cs) {
     c0_push = ex->push[1];
 }
 
-enum { W_PROGRAM, W_SHADER, W_PIPELINE, W_NO_VS, W_INDEX, W_UB, W_BIND, W_SSBO_ALIGN, W_SSBO_SLOT, W_RESTART, W_INDIRECT, W_FAULT_SKIP, W_FAULT_SKIP2, W_RESET, W_GEOMETRY, W_COUNT };
+enum { W_PROGRAM, W_SHADER, W_PIPELINE, W_NO_VS, W_INDEX, W_UB, W_BIND, W_SSBO_ALIGN, W_SSBO_SLOT, W_RESTART, W_INDIRECT, W_FAULT_SKIP, W_FAULT_SKIP2, W_FAULT_SKIP3, W_RESET, W_GEOMETRY, W_COUNT };
 
 static void warn_once(int key, const char *fmt, ...) {
     static volatile int32_t seen[W_COUNT];
@@ -2296,10 +2296,34 @@ typedef struct {
 // 782b2585777d2b4e, 392e2956038a9e64 and 7d85669ac430f01a read Location 9, feed every attribute per instance and carry
 // the same integer code (four reads of c9 at a computed index), and skipping every such quad left out ten vertex stages
 // that drew in all 17 logged runs. So it is matched by the name of its NVN 2 stage.
+//
+// TOTK_FIX_VS_FAULT=2 also skips every draw whose vertex stage reads Location 8 or 9 and whose attributes all come
+// from per-instance streams: the shape of the family, without naming its stages. With GPL off (vk_caps_gpl) an
+// exploration of update 458752 still faulted after 4 to 13 minutes, at different places for the same input, so the
+// fault follows the family rather than one stage. It drops more lights than 1.
 static int light_quad_fault_skip(const VkExec *ex, const GfxShader *vs, const GfxShader *fs) {
     static int on = -1;
-    if (on < 0) on = !rt_game_version && cfg_bool("TOTK_FIX_VS_FAULT") && vk_ctx()->props.vendorID == 0x10de;   // 0: Bananza
+    if (on < 0) on = !rt_game_version && vk_ctx()->props.vendorID == 0x10de ? cfg_int("TOTK_FIX_VS_FAULT") : 0;   // 0: Bananza
     if (!on || !vs || !fs) return 0;
+    if (on >= 2) {
+        GfxShaderIo vio[32];
+        uint32_t in = gfx_shader_inputs(vs, vio);
+        if (in & (3u << 8)) {
+            int fed = 0, per_vertex = 0;
+            for (int l = 0; l < 16; l++) {
+                if (!(in >> l & 1)) continue;
+                va_st va;
+                memcpy(&va, &ex->pipe.vattr[l], sizeof va);
+                if (!va.fmt || va.stream >= 16) continue;   // a fixed zero attribute: no stream
+                fed = 1;
+                if (!ex->pipe.vstream[va.stream].divisor) per_vertex = 1;
+            }
+            if (fed && !per_vertex) {
+                warn_once(W_FAULT_SKIP3, "per-instance draws reading Location 8 or 9 are skipped on NVIDIA (#9; TOTK_FIX_VS_FAULT=2)");
+                return 1;
+            }
+        }
+    }
     const uint8_t *ctl, *code = NULL;
     uint32_t len;
     if (find_stage(ex->prog, NVN_STAGE_VS, &ctl, &code, &len) && nvn2_origin(code) == 0xcae0ef8e9fe9147full) {
