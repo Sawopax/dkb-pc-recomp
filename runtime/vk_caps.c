@@ -41,6 +41,7 @@ void vk_caps_driver(VkPhysicalDevice p) {
     VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &drv};
     vkGetPhysicalDeviceProperties2(p, &p2);
     vk_caps.amd = p2.properties.vendorID == 0x1002;
+    vk_caps.nvidia = p2.properties.vendorID == 0x10de;
     // AMD split RDNA 1 and 2 off into a driver branch of their own; its driverInfo reads
     // "26.10.1 (AMD proprietary shader compiler)" where the RDNA 3 and 4 driver names LLPC.
     vk_caps.amd_sc = drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && strstr(drv.driverInfo, "shader compiler");
@@ -49,12 +50,16 @@ void vk_caps_driver(VkPhysicalDevice p) {
 // TOTK_GPL=0/1 forces graphics pipeline libraries off or on. Default off on AMD's RDNA 1/2 driver branch: every boot
 // that lost the device there had a cold pipeline cache and draws waiting on fast-linked pipelines, and a run with GPL
 // off booted (issue #5); Savage Wind Recomp turns GPL off on RDNA 4 under RADV for a GPU hang at the title screen.
+// Default off for Bananza on NVIDIA too: on an RTX 5070 (driver 610.88, update 458752) three of four 600 s tutorial
+// runs with GPL lost the device between 3 and 4.5 minutes with the #9 signature (an invalid instruction pointer),
+// and three of three with TOTK_GPL=0 ran the full 600 s. The cost is more stutter while the first pipelines build.
 int vk_caps_gpl(const VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT *f,
                 const VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT *p) {
     gpl_lib = f->graphicsPipelineLibrary;
     gpl_fast = p->graphicsPipelineLibraryFastLinking;
     const char *e = cfg_get("TOTK_GPL");   // no fixed default: it depends on the driver, see above
-    vk_caps.gpl = gpl_lib && gpl_fast && (e && *e ? strcmp(e, "0") != 0 : !vk_caps.amd_sc);
+    int bananza_nvidia = !rt_game_version && vk_caps.nvidia;   // rt_game_version 0: Bananza
+    vk_caps.gpl = gpl_lib && gpl_fast && (e && *e ? strcmp(e, "0") != 0 : !vk_caps.amd_sc && !bananza_nvidia);
     return vk_caps.gpl;
 }
 
@@ -142,7 +147,10 @@ void vk_caps_init(VkCtx *c) {
     const char *ge = cfg_get("TOTK_GPL");
     rt_log("vk caps: gpl %s fast-link %s (graphicsPipelineLibrary %u%s)", vk_caps.gpl ? "yes" : "no",
            gpl_fast ? "yes" : "no", (unsigned)gpl_lib,
-           !gpl_lib || !gpl_fast || vk_caps.gpl ? "" : ge && *ge ? ", off by TOTK_GPL=0" : ", off on AMD's RDNA 1/2 driver");
+           !gpl_lib || !gpl_fast || vk_caps.gpl ? ""
+           : ge && *ge                         ? ", off by TOTK_GPL=0"
+           : vk_caps.amd_sc                    ? ", off on AMD's RDNA 1/2 driver"
+                                               : ", off for Bananza on NVIDIA (#9; TOTK_GPL=1 turns it on)");
     rt_log("vk caps: fallbacks: float64 %s, storage buffers %s %u, subgroup pin %u on stages %#x, translator subgroup vs/fs/cs/gs %u/%u/%u/%u",
            vk_caps.float64 ? "native" : "softfloat64", vk_caps.sbuf_align ? "rounded down to" : "exact, alignment",
            (unsigned)l->minStorageBufferOffsetAlignment, want, (unsigned)vk_caps.sg_pin_stages, told[0], told[1], told[2], geometry_told);
