@@ -360,6 +360,36 @@ static int test_import(pool_t *pool) {
     copy_wait(sp.buffer, sp.offset, sb, 0, 0x4000);
     vmaInvalidateAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
     GCHECK(!memcmp(s, m + 0x30000, 0x4000), "GPU read of CPU-written heap differs");
+    VkMemInspect inspect;
+    if (vk_mem_inspect(a + 0x30000, 0x4000, &inspect) && inspect.shadow_storage) {
+        // Two overlapping pending GPU writes protect their union from a newer CPU write. The copy check exercises
+        // the same CPU -> shadow sync used by submits, without depending on scheduling a GPU write during the test.
+        memset(m + 0x30000, 0x11, 0x4000);
+        vk_mem_resolve(a + 0x30000, 0x4000, &sp);
+        vk_mem_shadow_sync();
+        vk_mem_gpu_pending(a + 0x31000, 0x1800);
+        vk_mem_gpu_pending(a + 0x32000, 0x1800);
+        memset(m + 0x30000, 0x22, 0x4000);
+        vk_mem_resolve(a + 0x30000, 0x4000, &sp);
+        vk_mem_shadow_sync();
+        copy_wait(sp.buffer, sp.offset, sb, 0, 0x4000);
+        vmaInvalidateAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
+        int equal = 1;
+        for (int i = 0; i < 0x4000; i++)
+            if (s[i] != (i >= 0x1000 && i < 0x3800 ? 0x11 : 0x22)) { equal = 0; break; }
+        GCHECK(equal, "shadow sync copied bytes covered by overlapping pending GPU writes");
+        vk_gpu_written(a + 0x31000, 0x1800);
+        vk_gpu_written(a + 0x32000, 0x1800);
+        memset(m + 0x30000, 0x33, 0x4000);
+        vk_mem_resolve(a + 0x30000, 0x4000, &sp);
+        vk_mem_shadow_sync();
+        copy_wait(sp.buffer, sp.offset, sb, 0, 0x4000);
+        vmaInvalidateAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
+        for (int i = 0; i < 0x4000; i++)
+            if (s[i] != 0x33) { equal = 0; break; }
+        GCHECK(equal, "shadow sync retained a completed GPU write in its pending index");
+        g_gpu_checks += 2;
+    }
     vmaDestroyBuffer(c->vma, sb, sa);
 
     // generations: written after `since` -> 1, then 0, explicit host write -> 1

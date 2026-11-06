@@ -1162,11 +1162,11 @@ static int reflect(GfxShader *s, int flags) {
         uint32_t locations = 0;
         for (unsigned i = 0; i < 32; i++)
             if (!(s->geometry_skip[1 + i / 8] >> ((i % 8) * 4) & 15)) locations |= 1u << i;
-        // Portable-v2 metadata describes this exact interface. Only a stage whose control says it was lowered from a
-        // native one (nvn_geometry_control_pack_lowered) may read or declare more than it forwards.
+        // The mask describes forwarded outputs, but a shader may read an input it does not forward (Bananza has one).
+        // A lowered native body may also declare additional outputs; a raw passthrough shader must match them exactly.
         if (flags & REFLECT_LOWERED_BODY) {
             if ((s->in_mask & locations) != locations || (s->out_mask & locations) != locations) return 0;
-        } else if (s->in_mask != locations || s->out_mask != locations) return 0;
+        } else if ((s->in_mask & locations) != locations || s->out_mask != locations) return 0;
         for (unsigned i = 0; i < 32; i++) if (locations >> i & 1) {
             const GfxShaderIo *a = &s->in[i], *b = &s->out[i];
             if (a->scalar_bits != 32 || b->scalar_bits != 32 || a->comps != 4 || b->comps != 4 ||
@@ -1884,12 +1884,12 @@ static int input_matches_cached(const GfxShader *s, const uint8_t iid[32]) {
         int ok = req_init(&r, in.stage, in.control, in.code, in.length, in.c1, &in.a) &&
                  shader_matches_request(s, &r);
         if (ok && !r.lowered_body) {
-            // Another cache layer may have allowed relaxed reflection. The input which actually matches this
-            // result must grant that policy itself; an ordinary portable source retains its exact interface.
+            // Another cache layer may have allowed extra outputs. The source must grant that policy; a raw portable
+            // shader may read extra inputs, but its outputs still match the passthrough mask exactly.
             uint32_t locations = 0;
             for (unsigned i = 0; i < 32; i++)
                 if (!(r.geometry_skip[1 + i / 8] >> ((i % 8) * 4) & 15)) locations |= 1u << i;
-            ok = s->in_mask == locations && s->out_mask == locations;
+            ok = (s->in_mask & locations) == locations && s->out_mask == locations;
         }
         if (ok) {
             UseMask m = use_of(s);

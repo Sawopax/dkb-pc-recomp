@@ -1881,6 +1881,15 @@ static uint32_t target_wmask(const VkPipeState *s, int i) {
 
 uint32_t vk_pipeline_target_wmask(const VkPipeState *s, int i) { return target_wmask(s, i); }
 
+// The alpha test reference as the pipeline key holds it: rounded to the nearest 1/255 inside (0, 1). Titles that fade
+// with the alpha test move the reference by less than one 8-bit step per frame, and an exact float built a pipeline
+// for every frame of the fade. The threshold moves by at most half a step. Values outside (0, 1) and NaN stay as they
+// are. After Djihads80/Eglantine#544, as ported in zortos293/Lichii ec3a455.
+static float alpha_ref_step(float ref) {
+    if (!(ref > 0.0f && ref < 1.0f)) return ref;
+    return (float)(int)(ref * 255.0f + 0.5f) / 255.0f;
+}
+
 static void gkey_fill(const VkPipeState *s, GKey *k) {
     memset(k, 0, sizeof *k);
     k->vs = s->vs, k->fs = s->fs, k->gs = s->gs;
@@ -1898,7 +1907,7 @@ static void gkey_fill(const VkPipeState *s, GKey *k) {
     k->dsb = s->fs && P.f_dual_src && uses_src1(s);
     k->fbl = s->fs ? s->feedback : 0;
     if (s->fs && s->color.alpha_func >= NVN_ALPHA_FUNC_NEVER && s->color.alpha_func < NVN_ALPHA_FUNC_ALWAYS)
-        k->alpha = (uint8_t)s->color.alpha_func, k->alpha_ref = s->alpha_ref;
+        k->alpha = (uint8_t)s->color.alpha_func, k->alpha_ref = alpha_ref_step(s->alpha_ref);
     if (!P.dyn_clamp) k->clamp = s->depth_clamp && P.f_depth_clamp;
     if (!P.dyn_poly) k->poly_mode = (uint8_t)polygon_mode(s->poly.mode);
     if (!P.dyn_a2c) k->a2c = s->ms.a2c != 0;

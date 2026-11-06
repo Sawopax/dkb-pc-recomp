@@ -283,11 +283,11 @@ class BodyInputs(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         return json.loads(run.stdout.splitlines()[-1])
 
-    def test_runtime_rejects_body_input_outside_passthrough_output(self):
+    def test_runtime_accepts_body_input_outside_passthrough_output(self):
         outside = self.modules['outside_mask']
         self.assertEqual({(storage, outside.locations[var]) for var, (storage, _) in outside.variables.items()
                           if var in outside.locations and storage in (1, 3)}, {(1, LOCATION), (1, 7), (3, LOCATION)})
-        for name, accepted in (('static', True), ('dynamic', True), ('outside_mask', False)):
+        for name in ('static', 'dynamic', 'outside_mask'):
             with self.subTest(packet=name):
                 code = bytes(0x30) + Path(self.jobs[name]['code']).read_bytes()
                 cp, raw, packed = (args.out / (name + suffix) for suffix in ('.fullcode', '.rawcontrol', '.control'))
@@ -302,15 +302,13 @@ class BodyInputs(unittest.TestCase):
                 self.assertTrue(result['accepted'])
                 result = self.fixture('seed-pass', cache, cp.resolve(), packed.resolve(),
                                       (args.out / (name + '.spv')).resolve(), (args.out / (name + '.res.json')).resolve())
-                self.assertEqual(result['accepted'], accepted)
-                if not accepted:
-                    self.assertFalse(list(cache.rglob('*.spv')))
+                self.assertTrue(result['accepted'])
 
-    def test_only_a_lowered_body_may_exceed_what_it_forwards(self):
+    def test_raw_passthrough_may_read_an_input_it_does_not_forward(self):
         name = 'outside_mask'
         result = self.fixture('reflect-flags', args.out / 'runtime-flags', (args.out / (name + '.spv')).resolve(),
                               (args.out / (name + '.res.json')).resolve())
-        self.assertEqual(result, dict(strict=False, lowered=True))
+        self.assertEqual(result, dict(strict=True, lowered=True))
         result = self.fixture('reflect-flags', args.out / 'runtime-flags', (args.out / 'static.spv').resolve(),
                               (args.out / 'static.res.json').resolve())
         self.assertEqual(result, dict(strict=True, lowered=True))
@@ -368,7 +366,7 @@ class BodyInputs(unittest.TestCase):
                 self.assertTrue(loaded['accepted'])
                 self.assertEqual(loaded['iid'], result['iid'])
 
-    def test_a_different_packed_source_cannot_relax_a_portable_input(self):
+    def test_a_matching_loose_source_allows_an_extra_input(self):
         code = bytes(0x30) + Path(self.jobs['static']['code']).read_bytes()
         cp, raw, packed = (args.out / ('cross-layer' + suffix) for suffix in ('.fullcode', '.rawcontrol', '.control'))
         cp.write_bytes(code)
@@ -399,8 +397,8 @@ class BodyInputs(unittest.TestCase):
         for kind in ('input-packed', 'private-packed'):
             with self.subTest(kind=kind, loose='extra-io'):
                 loaded = self.fixture('load', cache, kind, result['key'], result['iid'])
-                self.assertFalse(loaded['accepted'])
-        # A matching strict loose replacement remains usable despite that incompatible packed result/input.
+                self.assertTrue(loaded['accepted'])
+        # A replacement with exactly the forwarded input remains usable too.
         for path, suffix in zip(pair, ('.spv', '.res.json')):
             path.write_bytes((args.out / ('static' + suffix)).read_bytes())
         for kind in ('input-packed', 'private-packed'):

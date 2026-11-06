@@ -113,7 +113,40 @@ static void script_load(void) {
     rt_log("input: script %s, %d events", path, script_n);
 }
 
+// DKB_LIVE_INPUT=<file> (test harness): the first line of the file, read again every 6th call, lists the buttons held right now
+// (names as in TOTK_INPUT_SCRIPT, whitespace or comma separated; "LSTICK:x:y" and "RSTICK:x:y" set a stick). The file can be
+// rewritten while the game runs, so a person or a script can drive it step by step.
+static void live_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
+    static const char *path = (const char *)-1;
+    static unsigned calls;
+    static uint64_t bits;
+    static int32_t ls[2], rs[2];
+    if (path == (const char *)-1) path = getenv("DKB_LIVE_INPUT");
+    if (!path) return;
+    if (calls++ % 6 == 0) {
+        bits = 0, ls[0] = ls[1] = rs[0] = rs[1] = 0;
+        FILE *f = fopen(path, "r");
+        if (f) {
+            char line[256];
+            if (fgets(line, sizeof line, f)) {
+                for (char *s = line, *tok; (tok = strtok(s, " ,\r\n\t")); s = NULL) {
+                    int x, y;
+                    if (sscanf(tok, "LSTICK:%d:%d", &x, &y) == 2) { ls[0] = x, ls[1] = y; continue; }
+                    if (sscanf(tok, "RSTICK:%d:%d", &x, &y) == 2) { rs[0] = x, rs[1] = y; continue; }
+                    for (size_t i = 0; i < sizeof script_buttons / sizeof *script_buttons; i++)
+                        if (!strcmp(tok, script_buttons[i].name)) bits |= 1ull << script_buttons[i].bit;
+                }
+            }
+            fclose(f);
+        }
+    }
+    *b |= bits;
+    if (ls[0] || ls[1]) sl[0] = ls[0], sl[1] = ls[1];
+    if (rs[0] || rs[1]) sr[0] = rs[0], sr[1] = rs[1];
+}
+
 static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
+    live_apply(b, sl, sr);
     if (!script_state) script_load();
     if (!script_n) return;
     uint64_t fr = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), tick = frame_step_ticks();

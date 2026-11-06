@@ -944,6 +944,8 @@ static PoolRec **stouch;                          // shadow_lock: pools resolved
 static int nstouch, cstouch;
 static SRange *spend;                             // shadow_lock: GPU writes recorded and not copied back yet
 static int nspend, cspend;
+static SRange *sblocked;                          // shadow_lock: sorted union of spend, rebuilt when it changes
+static int nsblocked, csblocked, spend_dirty;
 static int64_t s_live_n, s_live_bytes;            // shadow_lock
 static uint64_t s_syncs, s_copied, s_queries, s_untracked, s_wb_bytes, s_ticks;   // shadow_lock: since the last log
 
@@ -996,17 +998,51 @@ static void shadow_forget(PoolRec *r) {
     plat_mutex_unlock(&shadow_lock);
 }
 
-// shadow_lock held: copies guest [a, b) into the shadow, leaving out the bytes of GPU writes not copied back yet
-// (spend from index i on).
-static void shadow_copy(PoolRec *r, uint64_t a, uint64_t b, int i) {
-    for (; i < nspend; i++)
-        if (spend[i].lo < b && spend[i].hi > a) {
-            if (spend[i].lo > a) shadow_copy(r, a, spend[i].lo, i + 1);
-            if (spend[i].hi < b) shadow_copy(r, spend[i].hi, b, i + 1);
-            return;
+static int shadow_range_cmp(const void *x, const void *y) {
+    const SRange *a = x, *b = y;
+    return a->lo < b->lo ? -1 : a->lo > b->lo ? 1 : a->hi < b->hi ? -1 : a->hi > b->hi;
+}
+
+// shadow_lock held: the writeback list changes independently of the CPU's dirty-page queries. Build its union once
+// per change, so each copied range searches by address rather than scanning thousands of pending writes.
+static void shadow_blocked_update(void) {
+    if (!spend_dirty) return;
+    while (csblocked < nspend) grow((void **)&sblocked, &csblocked, sizeof *sblocked);
+    if (nspend) {
+        memcpy(sblocked, spend, (size_t)nspend * sizeof *spend);
+        qsort(sblocked, (size_t)nspend, sizeof *sblocked, shadow_range_cmp);
+    }
+    nsblocked = 0;
+    for (int i = 0; i < nspend; i++) {
+        SRange r = sblocked[i];
+        if (nsblocked && r.lo <= sblocked[nsblocked - 1].hi) {
+            if (r.hi > sblocked[nsblocked - 1].hi) sblocked[nsblocked - 1].hi = r.hi;
+        } else sblocked[nsblocked++] = r;
+    }
+    spend_dirty = 0;
+}
+
+// shadow_lock held: copy guest [a, b) except for bytes a pending GPU write will replace at its fence.
+static void shadow_copy(PoolRec *r, uint64_t a, uint64_t b) {
+    int lo = 0, hi = nsblocked;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (sblocked[mid].hi <= a) lo = mid + 1;
+        else hi = mid;
+    }
+    for (int i = lo; i < nsblocked && sblocked[i].lo < b; i++) {
+        if (sblocked[i].lo > a) {
+            uint64_t end = sblocked[i].lo < b ? sblocked[i].lo : b;
+            memcpy(r->smap + (a - r->import_lo), (const void *)(uintptr_t)a, end - a);
+            s_copied += end - a;
         }
-    memcpy(r->smap + (a - r->import_lo), (const void *)(uintptr_t)a, b - a);
-    s_copied += b - a;
+        if (sblocked[i].hi >= b) return;
+        if (sblocked[i].hi > a) a = sblocked[i].hi;
+    }
+    if (a < b) {
+        memcpy(r->smap + (a - r->import_lo), (const void *)(uintptr_t)a, b - a);
+        s_copied += b - a;
+    }
 }
 
 // shadow_lock and gen_lock held: stamps the pool's written pages and copies those newer than its shadow.
@@ -1027,7 +1063,7 @@ static void shadow_sync_pool(PoolRec *r) {
     r->sgen = gen_now;
     if (!tracked) {   // nothing tells which pages changed: all of them
         s_untracked++;
-        shadow_copy(r, lo, hi, 0);
+        shadow_copy(r, lo, hi);
         return;
     }
     uint64_t run = 0;
@@ -1037,16 +1073,16 @@ static void shadow_sync_pool(PoolRec *r) {
         if (b > hi) b = hi;
         const uint32_t *ch = gen_chunk[a >> GEN_CHUNK_SHIFT];   // a 2 MiB region lies in one chunk
         if (reg_max[k] <= since || !ch) {
-            if (run) shadow_copy(r, run, a, 0), run = 0;
+            if (run) shadow_copy(r, run, a), run = 0;
             continue;
         }
         for (uint64_t x = a; x < b; x += 1ull << GEN_PAGE_SHIFT) {
             int dirty = ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since;
             if (dirty && !run) run = x;
-            else if (!dirty && run) shadow_copy(r, run, x, 0), run = 0;
+            else if (!dirty && run) shadow_copy(r, run, x), run = 0;
         }
     }
-    if (run) shadow_copy(r, run, hi, 0);
+    if (run) shadow_copy(r, run, hi);
 }
 
 void vk_mem_shadow_sync(void) {
@@ -1054,6 +1090,7 @@ void vk_mem_shadow_sync(void) {
     uint64_t t0 = qpc();
     plat_mutex_lock(&shadow_lock);
     if (nstouch) {
+        shadow_blocked_update();
         plat_mutex_lock(&gen_lock);
         for (int i = 0; i < nstouch; i++) shadow_sync_pool(stouch[i]), stouch[i]->stouched = 0;
         plat_mutex_unlock(&gen_lock);
@@ -1069,6 +1106,7 @@ void vk_mem_gpu_pending(uint64_t addr, uint64_t size) {
     plat_mutex_lock(&shadow_lock);
     if (nspend == cspend) grow((void **)&spend, &cspend, sizeof *spend);
     spend[nspend++] = (SRange){addr, addr + size};
+    spend_dirty = 1;
     plat_mutex_unlock(&shadow_lock);
 }
 
@@ -1084,7 +1122,7 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
             s_wb_bytes += size;
         }
         for (int i = 0; i < nspend; i++)
-            if (spend[i].lo == addr && spend[i].hi == addr + size) { spend[i] = spend[--nspend]; break; }
+            if (spend[i].lo == addr && spend[i].hi == addr + size) { spend[i] = spend[--nspend], spend_dirty = 1; break; }
         plat_mutex_unlock(&shadow_lock);
         plat_mutex_unlock_shared(&pool_lock);
     }
@@ -2192,7 +2230,7 @@ void vk_mem_shutdown(void) {
     pool_index.n = 0;
     nm = npend = nwbl = 0;   // mirrors went with their pools
     plat_mutex_lock(&shadow_lock);
-    nstouch = nspend = 0;   // shadows too
+    nstouch = nspend = nsblocked = spend_dirty = 0;   // shadows too
     s_live_n = s_live_bytes = 0;
     plat_mutex_unlock(&shadow_lock);
     for (int i = 0; i < nretiring; i++) destroy_rec(c, retiring[i]);   // finalized ones whose callback never ran

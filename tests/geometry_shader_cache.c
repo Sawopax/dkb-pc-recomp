@@ -56,6 +56,10 @@ const char *cfg_get(const char *name) { (void)name; return NULL; }
 void rt_log(const char *format, ...) { (void)format; }
 _Noreturn void rt_fatal(const char *format, ...) { (void)format; forbidden("runtime fatal"); abort(); }
 void rt_sha256(const void *data, size_t size, uint8_t out[32]) { sha256(data, size, out); }
+int nvn2_lower(const uint8_t *control, const uint8_t *code, const uint8_t **out_control, const uint8_t **out_code) {
+    (void)control; (void)code; (void)out_control; (void)out_code;
+    forbidden("NVN 2 lowering"); return 0;
+}
 int kern_core_away(void) { forbidden("guest-core release"); return 0; }
 void kern_core_back(int *away) { (void)away; forbidden("guest-core reacquire"); }
 uint64_t perf_begin(void) { forbidden("translation timing"); return 0; }

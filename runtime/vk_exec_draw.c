@@ -837,7 +837,8 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
     if (locked) vk_texture_unlock();
 }
 
-// DKB_NATIVE_GS=1 runs lowered native passthrough geometry stages through the portable path (issue #45). Off by default.
+// DKB_NATIVE_GS runs lowered native passthrough geometry stages through the portable path (issue #45). On by default
+// (runtime/cfg.c): without it the destructible terrain draws black; DKB_NATIVE_GS=0 turns it off.
 // Eglantine takes the varyings from the hardware skip mask (Maxwell register 0x1240, translate_program.cpp,
 // LowerGeometryPassthrough); the host does not have that mask for NVN 2 programs, so this infers it: what the vertex
 // stage writes and the fragment stage reads. That is enough for a fragment stage that reads nothing, as the terrain's

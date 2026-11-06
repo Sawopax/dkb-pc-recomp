@@ -5,6 +5,10 @@ the [roadmap issue](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/10).
 
 ## 5 November 2026
 
+- **The destructible terrain renders by default.** `native_gs` (#67) is now on unless `TOTK_NATIVE_GS=0`. On an RTX
+  5060 Ti the rocks drew with textures in hand-played gameplay up to the end-of-tutorial cutscene, and philneitz saw
+  the same on NVIDIA and on a Radeon 610M. The cutscene's device loss (#75) happens with the switch on or off, as does
+  the Radeon's own device loss.
 - **The destructible terrain renders with `TOTK_NATIVE_GS=1`** (#67 by philneitz, 0ee59b2, [#45](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/45)).
   The terrain's passthrough geometry stage now replays natively and fills the indirect counts that the reset from #48
   leaves at zero. In the mining tunnel the walls and floor render, where they are black with the switch off. It is
@@ -15,7 +19,15 @@ the [roadmap issue](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/10).
 - **The opening wall's cause is found** ([#45](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/45), by dwk001).
   The translator's decoder treats an unpredicated `CAL` as an unconditional branch, so the code after the call loses
   its predecessor. In a square root's slow path the result is then overwritten with `0 × inf = NaN`. The one-line fix
-  brings the wall back here as well and will be patch 0019.
+  brings the wall back here as well.
+- **The opening wall is back** (#78 by dwk001, 8167596). Translator patch 0019 lets the code after an unpredicated
+  `CAL` run, and the Ampere lowering now accepts `TXD` with an R G B mask, so three stages that failed to lower after
+  the tutorial translate ([#76](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/76)). The wall's lighting is
+  still darker than in Eglantine.
+- **A passthrough geometry stage may read an input it does not forward** (#81 by dwk001, 5bce1ef). One cached stage
+  failed reflection on every start because of that.
+- **Shadow memory sync looks up pending GPU writes by address** (#82 by dwk001, 87ae189) instead of scanning the
+  whole list for each copied range. Shadow storage is still off by default on Windows.
 - **A device lost in the end-of-tutorial cutscene** ([#75](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/75))
   reproduces on two machines and two drivers, with and without the `CAL` fix. Skipping the cutscene avoids it.
 
